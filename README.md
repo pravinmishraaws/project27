@@ -2,6 +2,10 @@
 
 In this project, you will develop robust monitoring system to detect anomalies, identify potential issues, and notify the operations team before disruptions occur using IoT device.
 
+## Architecture
+
+![1737527088748](https://github.com/user-attachments/assets/7e28ca09-0bf2-44e0-bd0c-4b4a1fd89e51)
+
 ## Building an IoT Anomaly Detection System for EpicReads’ Printing Machines
 
 As a Cloud Engineer, you’ll develop a real-time monitoring system that identifies anomalies based on machine-specific thresholds, generates actionable insights, &amp; sends alerts to the operations team. This assignment will enable you to design an IoT-based anomaly detection system using AWS services.
