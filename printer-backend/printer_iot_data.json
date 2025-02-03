@@ -1,0 +1,51 @@
+[
+    {
+        "PrinterId": "Printer1",
+        "data": {
+            "type": "temperature",
+            "value": 95
+        }
+    },
+    {
+        "PrinterId": "Printer1",
+        "data": {
+            "type": "temperature",
+            "value": 87
+        }
+    },
+    {
+        "PrinterId": "Printer1",
+        "data": {
+            "type": "temperature",
+            "value": 92
+        }
+    },
+    {
+        "PrinterId": "Printer1",
+        "data": {
+            "type": "temperature",
+            "value": 91
+        }
+    },
+    {
+        "PrinterId": "Printer2",
+        "data": {
+            "type": "temperature",
+            "value": 25
+        }
+    },
+    {
+        "PrinterId": "Printer2",
+        "data": {
+            "type": "temperature",
+            "value": 28
+        }
+    },
+    {
+        "PrinterId": "Printer2",
+        "data": {
+            "type": "temperature",
+            "value": 27
+        }
+    }
+]
