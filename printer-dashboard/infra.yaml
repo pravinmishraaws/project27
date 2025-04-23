@@ -1,0 +1,256 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Template to create Lambda functions, API Gateway with CORS, and proper permissions for printer event visualizer using an existing DynamoDB table.
+
+Parameters:
+  DynamoDBTableName:
+    Type: String
+    Description: Name of the existing DynamoDB table
+    Default: "PrinterProfiles" # Replace with your actual table name if different
+
+Resources:
+  # Lambda Execution Role for DynamoDB Access
+  LambdaExecutionRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service: "lambda.amazonaws.com"
+            Action: "sts:AssumeRole"
+      Policies:
+        - PolicyName: "LambdaDynamoDBPolicy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "logs:CreateLogGroup"
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                  - "dynamodb:Scan"
+                  - "dynamodb:GetItem"
+                Resource: "*"
+
+  # Lambda Function to Fetch Printers
+  FetchPrintersFunction:
+    Type: "AWS::Lambda::Function"
+    Properties:
+      FunctionName: "FetchPrintersFunction"
+      Handler: "index.handler"
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        ZipFile: |
+          const AWS = require('aws-sdk');
+          const dynamodb = new AWS.DynamoDB.DocumentClient();
+
+          exports.handler = async (event) => {
+              const params = {
+                  TableName: process.env.DYNAMODB_TABLE_NAME,
+                  ProjectionExpression: 'PrinterId, EventCount, Thresholds, OutOfBoundsCount, OutOfBoundsThreshold',  // Fetching all necessary fields
+              };
+
+              try {
+                  const data = await dynamodb.scan(params).promise();
+                  const printers = data.Items.sort((a, b) => b.EventCount - a.EventCount); // Sorting printers by EventCount
+                  return {
+                      statusCode: 200,
+                      headers: {
+                          "Access-Control-Allow-Origin": "*",
+                          "Access-Control-Allow-Methods": "GET,OPTIONS",
+                          "Access-Control-Allow-Headers": "Content-Type"
+                      },
+                      body: JSON.stringify(printers),
+                  };
+              } catch (error) {
+                  return {
+                      statusCode: 500,
+                      headers: {
+                          "Access-Control-Allow-Origin": "*",
+                          "Access-Control-Allow-Methods": "GET,OPTIONS",
+                          "Access-Control-Allow-Headers": "Content-Type"
+                      },
+                      body: JSON.stringify({ message: 'Error fetching printers', error }),
+                  };
+              }
+          };
+      Runtime: "nodejs16.x"
+      Environment:
+        Variables:
+          DYNAMODB_TABLE_NAME: !Ref DynamoDBTableName
+      MemorySize: 128
+      Timeout: 30
+
+  # Lambda Function to Fetch Events
+  FetchPrinterEventsFunction:
+    Type: "AWS::Lambda::Function"
+    Properties:
+      FunctionName: "FetchPrinterEventsFunction"
+      Handler: "index.handler"
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        ZipFile: |
+          const AWS = require('aws-sdk');
+          const dynamodb = new AWS.DynamoDB.DocumentClient();
+
+          exports.handler = async (event) => {
+              const PrinterId = event.pathParameters.PrinterId; // Correct key: PrinterId
+
+              const params = {
+                  TableName: process.env.DYNAMODB_TABLE_NAME,
+                  Key: { PrinterId }, // Use PrinterId as partition key
+                  ProjectionExpression: 'PrinterId, events'  // Fetching events for the printer
+              };
+
+              try {
+                  const data = await dynamodb.get(params).promise();
+                  if (data.Item && data.Item.events) {
+                      return {
+                          statusCode: 200,
+                          headers: {
+                              "Access-Control-Allow-Origin": "*",
+                              "Access-Control-Allow-Methods": "GET,OPTIONS",
+                              "Access-Control-Allow-Headers": "Content-Type"
+                          },
+                          body: JSON.stringify(data.Item.events),
+                      };
+                  } else {
+                      return {
+                          statusCode: 404,
+                          headers: {
+                              "Access-Control-Allow-Origin": "*",
+                              "Access-Control-Allow-Methods": "GET,OPTIONS",
+                              "Access-Control-Allow-Headers": "Content-Type"
+                          },
+                          body: JSON.stringify({ message: 'No events found for this printer' }),
+                      };
+                  }
+              } catch (error) {
+                  return {
+                      statusCode: 500,
+                      headers: {
+                          "Access-Control-Allow-Origin": "*",
+                          "Access-Control-Allow-Methods": "GET,OPTIONS",
+                          "Access-Control-Allow-Headers": "Content-Type"
+                      },
+                      body: JSON.stringify({ message: 'Error fetching events', error }),
+                  };
+              }
+          };
+      Runtime: "nodejs16.x"
+      Environment:
+        Variables:
+          DYNAMODB_TABLE_NAME: !Ref DynamoDBTableName
+      MemorySize: 128
+      Timeout: 30
+
+  # API Gateway Rest API
+  PrinterEventsApi:
+    Type: "AWS::ApiGateway::RestApi"
+    Properties:
+      Name: "PrinterEventsApi"
+
+  # API Gateway Resource for Printers
+  PrintersResource:
+    Type: "AWS::ApiGateway::Resource"
+    Properties:
+      ParentId: !GetAtt PrinterEventsApi.RootResourceId
+      PathPart: "printers"
+      RestApiId: !Ref PrinterEventsApi
+
+  # API Gateway Resource for PrinterId
+  PrinterIdResource:
+    Type: "AWS::ApiGateway::Resource"
+    Properties:
+      ParentId: !Ref PrintersResource
+      PathPart: "{PrinterId}"
+      RestApiId: !Ref PrinterEventsApi
+
+  # API Gateway Resource for Printer Events (/printers/{PrinterId}/events)
+  PrinterEventsResource:
+    Type: "AWS::ApiGateway::Resource"
+    Properties:
+      ParentId: !Ref PrinterIdResource
+      PathPart: "events"
+      RestApiId: !Ref PrinterEventsApi
+
+  # API Gateway Method for Fetching Printers (GET /printers)
+  PrintersMethod:
+    Type: "AWS::ApiGateway::Method"
+    Properties:
+      AuthorizationType: "NONE"
+      HttpMethod: "GET"
+      ResourceId: !Ref PrintersResource
+      RestApiId: !Ref PrinterEventsApi
+      Integration:
+        IntegrationHttpMethod: "POST"
+        Type: "AWS_PROXY"
+        Uri: 
+          Fn::Sub: 
+            - arn:aws:apigateway:${Region}:lambda:path/2015-03-31/functions/${FetchPrintersFunction.Arn}/invocations
+            - Region: !Ref "AWS::Region"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+        - StatusCode: 500
+
+  # API Gateway Method for Fetching Events (GET /printers/{PrinterId}/events)
+  PrinterEventsMethod:
+    Type: "AWS::ApiGateway::Method"
+    Properties:
+      AuthorizationType: "NONE"
+      HttpMethod: "GET"
+      ResourceId: !Ref PrinterEventsResource
+      RestApiId: !Ref PrinterEventsApi
+      RequestParameters:
+        method.request.path.PrinterId: true
+      Integration:
+        IntegrationHttpMethod: "POST"
+        Type: "AWS_PROXY"
+        Uri: 
+          Fn::Sub: 
+            - arn:aws:apigateway:${Region}:lambda:path/2015-03-31/functions/${FetchPrinterEventsFunction.Arn}/invocations
+            - Region: !Ref "AWS::Region"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+        - StatusCode: 404
+        - StatusCode: 500
+
+  # Deploy API Gateway
+  ApiDeployment:
+    Type: "AWS::ApiGateway::Deployment"
+    Properties:
+      RestApiId: !Ref PrinterEventsApi
+      StageName: "dev"
+    DependsOn:
+      - PrintersMethod
+      - PrinterEventsMethod
+
+  # Permissions for API Gateway to Invoke Lambda Functions
+  ApiLambdaInvokePermissionFetchPrinters:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      Action: "lambda:InvokeFunction"
+      FunctionName: !Ref FetchPrintersFunction
+      Principal: "apigateway.amazonaws.com"
+      SourceArn: 
+        Fn::Sub: "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${PrinterEventsApi}/*/*/printers"
+
+  ApiLambdaInvokePermissionFetchPrinterEvents:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      Action: "lambda:InvokeFunction"
+      FunctionName: !Ref FetchPrinterEventsFunction
+      Principal: "apigateway.amazonaws.com"
+      SourceArn: 
+        Fn::Sub: "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${PrinterEventsApi}/*/*/printers/*/events"
+
+Outputs:
+  ApiUrl:
+    Value: 
+      Fn::Sub: "https://${PrinterEventsApi}.execute-api.${AWS::Region}.amazonaws.com/dev"
+    Description: "URL of the API Gateway"
